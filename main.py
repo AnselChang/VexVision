@@ -7,16 +7,17 @@ WINDOW_NAME = "VexVision by Ansel"
 PREVIEW_NAME = "Preview"
 TRACKBARS = "Customize"
 
-BLACK = np.array([0,0,0], dtype = np.uint8)
-RED = np.array([0,0,255], dtype = np.uint8)
-GREEN = np.array([0,255,0], dtype = np.uint8)
-BLUE = np.array([255,0,0], dtype = np.uint8)
-YELLOW = np.array([0,255,255], dtype = np.uint8)
-PURPLE = np.array([255,0,255], dtype = np.uint8)
-AQUA = np.array([255,255,0], dtype = np.uint8)
+BLACK = [0,0,0]
+RED = [0,0,255]
+GREEN = [0,255,0]
+BLUE = [255,0,0]
+YELLOW = [0,255,255]
+PURPLE = [255,0,255]
+AQUA = [255,255,0]
 COLORS = [RED, GREEN, BLUE, YELLOW, PURPLE, AQUA]
 
 BLOB_COLOR = GREEN
+FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 
 def nothing(x):
@@ -30,11 +31,21 @@ def applyBlur(frame):
     size = 1 + 2*cv2.getTrackbarPos("blur", TRACKBARS) # Kernel size must be odd
     return cv2.GaussianBlur(frame, [size, size] ,0) # apply a blur to smooth out noise.
 
-
+# numLabels is the number of labels (objects)
 # labels is a 2d array with each pixel specifying the label of the connected component it belongs to
-def drawCCRects(frame, numLabels, labels, stats, centroids):
-
-    pass
+# stats[label, COLUMN] returns an array of information for that object
+def drawDetectedBoxes(frame, numLabels, labels, stats, centroids):
+    
+    for i in range(1, numLabels):
+        x = stats[i, cv2.CC_STAT_LEFT]
+        y = stats[i,cv2.CC_STAT_TOP]
+        x2 = x + stats[i, cv2.CC_STAT_WIDTH]
+        y2 = y  + stats[i, cv2.CC_STAT_HEIGHT]
+        
+        cv2.rectangle(frame, [x, y], [x2, y2], GREEN, 2)
+        center = np.around(centroids[i]).astype(int).tolist()
+        cv2.circle(frame, center, 5, BLUE, -1)
+        cv2.putText(frame, "({}, {})".format(*center), [center[0] - 40, center[1] - 13], FONT, 0.5, BLUE, 2, cv2.LINE_AA)
     
 
 # Set image to be distance from color
@@ -73,9 +84,12 @@ def applyColorFilter(frame, targetColor):
     g = (labels*200%256).reshape(h,w)
     r = (labels*300%256).reshape(h,w)
 
-    print(labels.shape, labels.dtype)
-
+    # Merge the three rgb arrays back into a single [num pixels x 3] array
     coloredResult = np.dstack([b,g,r]).astype(np.uint8, copy = False)
+
+    # Draw bounding boxes and centroids
+    drawDetectedBoxes(coloredResult, *output)
+    
     return coloredResult
 
 
@@ -89,10 +103,10 @@ def main():
     cv2.moveWindow(TRACKBARS, 0, 400)
     
     # Create threshold and gaussian blur trackbars
-    cv2.imshow(TRACKBARS, np.zeros([1, 500]))
-    cv2.createTrackbar("threshold", TRACKBARS , 30, 80, nothing)
+    cv2.imshow(TRACKBARS, np.zeros([1, 800]))
+    cv2.createTrackbar("threshold", TRACKBARS , 35, 80, nothing)
     cv2.createTrackbar("blur", TRACKBARS, 10, 20, nothing)
-    cv2.createTrackbar("connectivity", TRACKBARS, 15, 30, nothing)
+    cv2.createTrackbar("connectivity", TRACKBARS, 30, 50, nothing)
 
     # init blob detection
     params = cv2.SimpleBlobDetector_Params()
