@@ -6,9 +6,14 @@ from functools import partial
 WINDOW_NAME = "VexVision by Ansel"
 PREVIEW_NAME = "Preview"
 
-RED = [0,0,255]
-GREEN = [0,255,0]
-BLUE = [255,0,0]
+BLACK = np.array([0,0,0], dtype = np.uint8)
+RED = np.array([0,0,255], dtype = np.uint8)
+GREEN = np.array([0,255,0], dtype = np.uint8)
+BLUE = np.array([255,0,0], dtype = np.uint8)
+YELLOW = np.array([0,255,255], dtype = np.uint8)
+PURPLE = np.array([255,0,255], dtype = np.uint8)
+AQUA = np.array([255,255,0], dtype = np.uint8)
+COLORS = [RED, GREEN, BLUE, YELLOW, PURPLE, AQUA]
 
 BLOB_COLOR = GREEN
 
@@ -24,6 +29,13 @@ def applyBlur(frame):
     size = 1 + 2*cv2.getTrackbarPos("blur", WINDOW_NAME) # Kernel size must be odd
     return cv2.GaussianBlur(frame, [size, size] ,0) # apply a blur to smooth out noise.
 
+
+# labels is a 2d array with each pixel specifying the label of the connected component it belongs to
+def drawCCRects(frame, numLabels, labels, stats, centroids):
+
+    pass
+    
+
 # Set image to be distance from color
 def applyColorFilter(frame, targetColor):
 
@@ -36,15 +48,34 @@ def applyColorFilter(frame, targetColor):
     flattened = frame.reshape(h*w, c)
 
     result = 255 - cdist([[tb, tg, tr]], flattened) * SCALAR # now scaled between 0 - 255 in terms of distance to color. 255 = color
+    result = result.astype(np.uint8) # convert float to 0-255
 
     threshold = 140 + cv2.getTrackbarPos("threshold", WINDOW_NAME)
-    result[result <= threshold] = 0 # Set pixels far enough from desired color to 0
+    
+    # Get connected components
+    binary = cv2.threshold(result, threshold, 255, cv2.THRESH_BINARY)[1] # binary is a binary array
+    binary = binary.reshape(h,w) # reshape as 2d array in preparation for convolution
+    binary = cv2.filter2D(src=binary, ddepth=-1, kernel=np.ones([1, 1], dtype = np.uint8))
+    binary[binary > 1] = 1 # restrict back to 1
+    output = cv2.connectedComponentsWithStats(binary, 8, cv2.CV_32S)
 
-    result = result.astype(np.uint8) # convert float to 0-255
-    result = np.tile(np.array([result]).transpose(), (1, 3)) # convert greyscale into rgb
-    result = result.reshape(h,w, 3) # reshape into height x width x rgb
 
-    return result
+
+    #print(output[1].shape)
+    #print(result.shape)
+
+    def toColor(x, i):
+        return np.array(0, dtype = np.uint8) if (x == 0) else COLORS[x % len(COLORS)][i]
+
+    labels = output[1]
+    b = np.vectorize(toColor)(labels, 0).reshape(h,w)
+    g = np.vectorize(toColor)(labels, 1).reshape(h,w)
+    r = np.vectorize(toColor)(labels, 2).reshape(h,w)
+
+    print("number cc:", output[0])
+
+    coloredResult = np.dstack([b,g,r])
+    return coloredResult
 
 
 def main():
@@ -56,7 +87,7 @@ def main():
     
     # Create threshold and gaussian blur trackbars
     cv2.createTrackbar("threshold", WINDOW_NAME , 30, 80, nothing)
-    cv2.createTrackbar("blur", WINDOW_NAME, 0, 20, nothing)
+    cv2.createTrackbar("blur", WINDOW_NAME, 10, 20, nothing)
 
     # init blob detection
     params = cv2.SimpleBlobDetector_Params()
@@ -78,12 +109,6 @@ def main():
             break
 
         filteredFrame = applyColorFilter(frame, [255, 0, 0]) # Greyscale image with distance to desired color
-        keypoints = blobDetector.detect(filteredFrame) # detect blobs from greyscale
-
-        # Outline detected blobs
-        blank = np.zeros((1, 1))
-        filteredFrame = cv2.drawKeypoints(filteredFrame, keypoints, blank, BLOB_COLOR, cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-        frame = cv2.drawKeypoints(frame, keypoints, blank, BLOB_COLOR, cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
         # Display filtered and preview windows
         cv2.imshow(WINDOW_NAME, filteredFrame)
