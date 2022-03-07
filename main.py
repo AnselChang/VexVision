@@ -44,16 +44,16 @@ def applyColorFilter(frame, targetColor):
 
     tr, tg, tb = targetColor
 
-    # [num pixels x 3]
+    # reshape into a [num pixels x color] array for easier data manipulation
     h,w,c = frame.shape
     flattened = frame.reshape(h*w, c)
 
     result = 255 - cdist([[tb, tg, tr]], flattened) * SCALAR # now scaled between 0 - 255 in terms of distance to color. 255 = color
     result = result.astype(np.uint8) # convert float to 0-255
 
-    threshold = 140 + cv2.getTrackbarPos("threshold", TRACKBARS)
+    threshold = 140 + cv2.getTrackbarPos("threshold", TRACKBARS) # slightly arbitrary limit to sliders between 140 and 220 for detection threshold
     
-    # Get connected components
+    # Binary step function to convert analog into [detected] [not detected] pixels
     binary = cv2.threshold(result, threshold, 255, cv2.THRESH_BINARY)[1] # binary is a binary array
     binary = binary.reshape(h,w) # reshape as 2d array in preparation for convolution
 
@@ -67,7 +67,7 @@ def applyColorFilter(frame, targetColor):
     def toColor(x, i):
         return np.array(0, dtype = np.uint8) if (x == 0) else COLORS[x % len(COLORS)][i]
 
-    # Convert label for each pixel into corresponding color. Very expensive operation
+    # Convert label for each pixel into corresponding color. Using ufuncs here for extremely fast computation but sacrificing control over colors (who cares?)
     labels = output[1]
     b = (labels*100%256).reshape(h,w)
     g = (labels*200%256).reshape(h,w)
