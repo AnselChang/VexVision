@@ -3,6 +3,10 @@ from scipy.spatial.distance import cdist
 import numpy as np
 from functools import partial
 
+# The color to detect for
+TARGET_COLOR = [255, 0, 0]
+
+
 WINDOW_NAME = "VexVision by Ansel"
 PREVIEW_NAME = "Preview"
 TRACKBARS = "Customize"
@@ -12,9 +16,12 @@ RED = [0,0,255]
 GREEN = [0,255,0]
 BLUE = [255,0,0]
 YELLOW = [0,255,255]
-PURPLE = [255,0,255]
+PURPLE = [179, 0, 255]
+PINK = [255,0,255]
 AQUA = [255,255,0]
-COLORS = [RED, YELLOW, PURPLE, AQUA]
+ORANGE = [255, 128, 0]
+DGREEN = [48, 132, 73]
+COLORS = [RED, YELLOW, PURPLE, AQUA, ORANGE, DGREEN, PINK]
 
 BLOB_COLOR = GREEN
 FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -122,7 +129,7 @@ class Objects:
     # Given the current and previous set of labels, calculate the new positions of objects, and possibly add/delete current objects
     def updateObjects(self):
 
-        MAX_DISTANCE_IDENTITY = 50
+        MAX_DISTANCE_IDENTITY = 20
 
         # Sort objects by area from largest to smallest
         self.objects.sort(key = lambda obj : obj.prevState.getArea(), reverse = True)
@@ -144,10 +151,10 @@ class Objects:
                     closestDistance = dist
                     closestLabel = label
 
-            print("Closest:", closestDistance)
+            #print("Closest:", closestDistance)
             # If the closest label is sufficiently close, assign it to the object
-            if closestDistance < MAX_DISTANCE_IDENTITY:
-                obj.currState.assign(label)
+            if closestLabel is not None and closestDistance < MAX_DISTANCE_IDENTITY:
+                obj.currState.assign(closestLabel)
                 #print("object assigned")
 
         # For unassigned labels, assign to closest object or create new object if no object sufficiently close
@@ -183,13 +190,16 @@ class Objects:
             
 
     def drawObjects(self, frame):
-        print(len(self.objects))
+        #print(len(self.objects))
+        s = "["
         for obj in self.objects:
+            s += str(obj.id) + ", "
             pos = obj.currState.getPosition()
-            print(pos, type(pos))
+            #print(pos, type(pos))
             radius = round(math.sqrt(obj.currState.getArea() / math.pi))
             color = COLORS[obj.id % len(COLORS)]
             cv2.circle(frame, pos, radius, color, 3)
+        #print(s, "]")
             
 
 def nothing(x):
@@ -248,21 +258,76 @@ def applyColorFilter(frame, objects, targetColor):
     
     return coloredResult
 
+class Mouse:
+    def __init__(self):
+        self.x = -1
+        self.y = -1
+        self.active = False
+        self.time = 0
+        self.TIME_SHOWN = 1 # seconds
+        self.radius = 5
 
+    def press(self, x, y):
+        self.x = x
+        self.y = y
+        self.active = True
+        self.time = time.time()
+
+    def isActive(self):
+        if self.active and time.time() - self.time > self.TIME_SHOWN:
+            self.active = False
+        return self.active
+
+    def draw(self, frame):
+        if self.isActive():
+            cv2.rectangle(frame, [self.x - self.radius, self.y - self.radius], [self.x + self.radius, self.y + self.radius], RED, 3)
+
+mouse = Mouse()
+
+def handleMouse(event, x, y, flags, param):
+
+    global TARGET_COLOR
+
+    if event == cv2.EVENT_LBUTTONDOWN:
+        mouse.press(x, y)
+
+        # Average 
+        sumR = 0
+        sumG = 0
+        sumB = 0
+        n = 0
+        #print(x,y, cameraFrame.shape)
+        for i in range(max(0, x - mouse.radius), min(x + mouse.radius, cameraFrame.shape[1] - 1)):
+            for j in range(max(0, y - mouse.radius), min(y + mouse.radius, cameraFrame.shape[0] - 1)):
+                n  += 1
+                sumB += cameraFrame[j][i][0]
+                sumG += cameraFrame[j][i][1]
+                sumR += cameraFrame[j][i][2]
+
+        TARGET_COLOR = [round(sumR / n), round(sumG / n), round(sumB / n)]
+        print("NEW TARGET COLOR:", TARGET_COLOR)
+
+
+cameraFrame = None
 def main():
+    global cameraFrame
 
     # Create filtered and preview windows
     cv2.namedWindow(PREVIEW_NAME)
     cv2.moveWindow(PREVIEW_NAME, 700, 0)
+    cv2.setMouseCallback(PREVIEW_NAME, handleMouse)
     cv2.namedWindow(WINDOW_NAME)
     cv2.namedWindow(TRACKBARS)
     cv2.moveWindow(TRACKBARS, 0, 400)
     
     # Create threshold and gaussian blur trackbars
     cv2.imshow(TRACKBARS, np.zeros([1, 800]))
-    cv2.createTrackbar("threshold", TRACKBARS , 35, 80, nothing)
-    cv2.createTrackbar("blur", TRACKBARS, 10, 20, nothing)
-    cv2.createTrackbar("connectivity", TRACKBARS, 30, 50, nothing)
+    cv2.createTrackbar("brightness", TRACKBARS, 50, 100, nothing)
+    cv2.createTrackbar("contrast", TRACKBARS, 0, 50, nothing)
+    cv2.createTrackbar("threshold", TRACKBARS , 95, 115, nothing)
+    cv2.createTrackbar("blur", TRACKBARS, 5, 20, nothing)
+    cv2.createTrackbar("connectivity", TRACKBARS, 20, 50, nothing)
+    
 
     # init blob detection
     params = cv2.SimpleBlobDetector_Params()
@@ -280,19 +345,29 @@ def main():
     while True:
         objects.resetStartOfTick()
         
-        rval, frame = vc.read()
-        frame = cv2.resize(frame, (0,0), fx=0.5, fy=0.5) # reduce image by half
-        frame = applyBlur(frame) # gaussian blur
+        rval, cameraFrame = vc.read()
+
+        # add contrast to image
+        alpha = 1 + cv2.getTrackbarPos("contrast", TRACKBARS) / 30
+        brightness = cv2.getTrackbarPos("brightness", TRACKBARS) - 50
+       # print(alpha, brightness)
+        if alpha != 1:
+            cameraFrame = np.clip(cameraFrame * alpha + brightness, 0, 255).astype(np.uint8)
+        print(cameraFrame)
+        
+        cameraFrame = cv2.resize(cameraFrame, (0,0), fx=0.5, fy=0.5) # reduce image by half
+        cameraFrame = applyBlur(cameraFrame) # gaussian blur
         if not rval:
             break
 
-        filteredFrame = applyColorFilter(frame, objects, [255, 0, 0]) # Greyscale image with distance to desired color
+        filteredFrame = applyColorFilter(cameraFrame, objects, TARGET_COLOR) # Greyscale image with distance to desired color
         objects.updateObjects()
         objects.drawObjects(filteredFrame)
 
         # Display filtered and preview windows
         cv2.imshow(WINDOW_NAME, filteredFrame)
-        cv2.imshow(PREVIEW_NAME, frame)
+        mouse.draw(cameraFrame)
+        cv2.imshow(PREVIEW_NAME, cameraFrame)
         key = cv2.waitKey(10) # wait 10 ms while at the same time listen for keyboard input. necessary for opencv loop to work
         if key == 27: # exit on ESC
             break
