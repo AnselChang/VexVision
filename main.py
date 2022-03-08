@@ -3,13 +3,15 @@ from scipy.spatial.distance import cdist
 import numpy as np
 from functools import partial
 
-# The color to detect for
-TARGET_COLOR = [255, 0, 0]
+# The color to detect for. In HSV
+TARGET_COLOR = [0, 128, 128]
 
 
 WINDOW_NAME = "VexVision by Ansel"
 PREVIEW_NAME = "Preview"
 TRACKBARS = "Customize"
+VISUALIZER = "Color Visualizer"
+VISUALIZER2 = "Brightness Visualizer"
 
 BLACK = [0,0,0]
 RED = [0,0,255]
@@ -215,24 +217,42 @@ def applyBlur(frame):
     
 
 # Set image to be distance from color
-def applyColorFilter(frame, objects, targetColor):
+# targetColor in hsv
+# For HSV, hue range is [0,179], saturation range is [0,255], and value range is [0,255].
+def applyColorFilter(hsvFrame, objects, targetColor):
 
-    SCALAR = 255.0 / math.sqrt(255**2+255**2+255**2)
+    # height, width, color = 3
+    h,w,c = hsvFrame.shape
 
-    tr, tg, tb = targetColor
+    # Convert to hsv and flatten
+    hsvFrame = hsvFrame.reshape(h*w, c)
 
-    # reshape into a [num pixels x color] array for easier data manipulation
-    h,w,c = frame.shape
-    flattened = frame.reshape(h*w, c)
+    # colorDist is the modular distance to the targetColor in terms of hue
+    colorDist = (180 + hsvFrame[:, 0] - targetColor[0]) % 180 # extract hue column
+    colorDist = np.minimum(colorDist, 180 - colorDist) # modular distance
+    colorDist = colorDist.reshape(h, w)
 
-    result = 255 - cdist([[tb, tg, tr]], flattened) * SCALAR # now scaled between 0 - 255 in terms of distance to color. 255 = color
-    result = result.astype(np.uint8) # convert float to 0-255
+    #image = np.tile(np.array([colorDist]).transpose(), (1, 3))
+    #print(image.shape)
+    #cv2.imshow(VISUALIZER, colorDist.reshape(h,w))
 
-    threshold = 140 + cv2.getTrackbarPos("threshold", TRACKBARS) # slightly arbitrary limit to sliders between 140 and 220 for detection threshold
-    
-    # Binary step function to convert analog into [detected] [not detected] pixels
-    binary = cv2.threshold(result, threshold, 255, cv2.THRESH_BINARY)[1] # binary is a binary array
-    binary = binary.reshape(h,w) # reshape as 2d array in preparation for convolution
+    # targetArr is the euclidean distance to targetColor in terms of brightness
+    targetArr = np.array([targetColor[1], targetColor[2]])
+    darkArr = hsvFrame[:, 1:] # extract saturation and value columns
+    darkDist = cdist([targetArr], darkArr)
+    darkDist = darkDist.reshape(h,w)
+
+    # Get user-defined thresholds
+    cThresh = cv2.getTrackbarPos("color threshold", TRACKBARS)
+    dThresh = cv2.getTrackbarPos("dark threshold", TRACKBARS)
+    print(cThresh, dThresh)
+
+    # Pixel is considered detected if it is close enough to targetColor both in terms of hue and brightness based on thresholds
+    colorMask = (colorDist <= cThresh)
+    darkMask = (darkDist <= dThresh)
+    binary = (colorMask & darkMask).astype(np.uint8) # 1 if detected, 0 if not detected
+    cv2.imshow(VISUALIZER, colorMask.astype(np.uint8)*255)
+    cv2.imshow(VISUALIZER2, darkMask.astype(np.uint8)*255)
 
     # "Pad" elements close-by to ones through convolution in order to connect closely-related components
     padding = 1 + 2*cv2.getTrackbarPos("connectivity", TRACKBARS)
@@ -291,12 +311,11 @@ def handleMouse(event, x, y, flags, param):
     if event == cv2.EVENT_LBUTTONDOWN:
         mouse.press(x, y)
 
-        # Average 
-        sumR = 0
-        sumG = 0
+        # Find the average color of all the points around the clicked point, and set target color to this
         sumB = 0
+        sumG = 0
+        sumR = 0
         n = 0
-        #print(x,y, cameraFrame.shape)
         for i in range(max(0, x - mouse.radius), min(x + mouse.radius, cameraFrame.shape[1] - 1)):
             for j in range(max(0, y - mouse.radius), min(y + mouse.radius, cameraFrame.shape[0] - 1)):
                 n  += 1
@@ -304,27 +323,37 @@ def handleMouse(event, x, y, flags, param):
                 sumG += cameraFrame[j][i][1]
                 sumR += cameraFrame[j][i][2]
 
-        TARGET_COLOR = [round(sumR / n), round(sumG / n), round(sumB / n)]
-        print("NEW TARGET COLOR:", TARGET_COLOR)
+        arr = np.array([[[round(sumB / n), round(sumG / n), round(sumR / n)]]], dtype = np.uint8)
+        print(arr.shape)
+        TARGET_COLOR = cv2.cvtColor(arr, cv2.COLOR_BGR2HSV)[0][0]
+        print("HSV color:", TARGET_COLOR)
 
 
 cameraFrame = None
 def main():
     global cameraFrame
 
+    y2 = 350
+    y3 = 700
+
     # Create filtered and preview windows
     cv2.namedWindow(PREVIEW_NAME)
-    cv2.moveWindow(PREVIEW_NAME, 700, 0)
+    cv2.moveWindow(PREVIEW_NAME, 650, 0)
     cv2.setMouseCallback(PREVIEW_NAME, handleMouse)
     cv2.namedWindow(WINDOW_NAME)
+    
+    cv2.namedWindow(VISUALIZER)
+    cv2.moveWindow(VISUALIZER, 0, y2)
+    cv2.namedWindow(VISUALIZER2)
+    cv2.moveWindow(VISUALIZER2, 650, y2)
+
     cv2.namedWindow(TRACKBARS)
-    cv2.moveWindow(TRACKBARS, 0, 400)
+    cv2.moveWindow(TRACKBARS, 200, y3)
     
     # Create threshold and gaussian blur trackbars
     cv2.imshow(TRACKBARS, np.zeros([1, 800]))
-    cv2.createTrackbar("brightness", TRACKBARS, 50, 100, nothing)
-    cv2.createTrackbar("contrast", TRACKBARS, 0, 50, nothing)
-    cv2.createTrackbar("threshold", TRACKBARS , 95, 115, nothing)
+    cv2.createTrackbar("color threshold", TRACKBARS , 10, 50, nothing)
+    cv2.createTrackbar("dark threshold", TRACKBARS , 50, 200, nothing)
     cv2.createTrackbar("blur", TRACKBARS, 5, 20, nothing)
     cv2.createTrackbar("connectivity", TRACKBARS, 20, 50, nothing)
     
@@ -353,16 +382,16 @@ def main():
        # print(alpha, brightness)
         if alpha != 1:
             cameraFrame = np.clip(cameraFrame * alpha + brightness, 0, 255).astype(np.uint8)
-        print(cameraFrame)
         
         cameraFrame = cv2.resize(cameraFrame, (0,0), fx=0.5, fy=0.5) # reduce image by half
         cameraFrame = applyBlur(cameraFrame) # gaussian blur
+        hsvFrame = cv2.cvtColor(cameraFrame, cv2.COLOR_BGR2HSV)
         if not rval:
             break
 
-        filteredFrame = applyColorFilter(cameraFrame, objects, TARGET_COLOR) # Greyscale image with distance to desired color
+        filteredFrame = applyColorFilter(hsvFrame, objects, TARGET_COLOR) # Greyscale image with distance to desired color
         objects.updateObjects()
-        objects.drawObjects(filteredFrame)
+        objects.drawObjects(cameraFrame)
 
         # Display filtered and preview windows
         cv2.imshow(WINDOW_NAME, filteredFrame)
